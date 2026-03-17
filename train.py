@@ -27,7 +27,7 @@ def verify_macos_env():
 
 verify_macos_env()
 
-from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb
+from prepare import MAX_SEQ_LEN, TIME_BUDGET, Tokenizer, make_dataloader, evaluate_bpb, CACHE_DIR
 
 # ---------------------------------------------------------------------------
 # GPT Model
@@ -525,6 +525,9 @@ else:
 
 H100_BF16_PEAK_FLOPS = 989.5e12
 
+MODEL_DIR = os.path.join(CACHE_DIR, "model")
+CHECKPOINT_PATH = os.path.join(MODEL_DIR, "checkpoint.pt")
+
 tokenizer = Tokenizer.from_directory()
 vocab_size = tokenizer.get_vocab_size()
 print(f"Vocab size: {vocab_size:,}")
@@ -546,6 +549,15 @@ with torch.device("meta"):
     model = GPT(config)
 model.to_empty(device=device)
 model.init_weights()
+
+# Load previous checkpoint if it exists so training can continue across runs
+os.makedirs(MODEL_DIR, exist_ok=True)
+if os.path.exists(CHECKPOINT_PATH):
+    ckpt = torch.load(CHECKPOINT_PATH, map_location=device)
+    state_dict = ckpt.get("model_state_dict")
+    if state_dict is not None:
+        model.load_state_dict(state_dict)
+        print(f"Loaded checkpoint from {CHECKPOINT_PATH}")
 
 param_counts = model.num_scaling_params()
 print("Parameter counts:")
@@ -682,6 +694,14 @@ total_tokens = step * TOTAL_BATCH_SIZE
 model.eval()
 with autocast_ctx:
     val_bpb = evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE)
+
+# Save checkpoint so future runs can continue training this model
+checkpoint = {
+    "model_state_dict": model.state_dict(),
+    "config": asdict(config),
+}
+torch.save(checkpoint, CHECKPOINT_PATH)
+print(f"Saved checkpoint to {CHECKPOINT_PATH}")
 
 # Final summary
 t_end = time.time()
